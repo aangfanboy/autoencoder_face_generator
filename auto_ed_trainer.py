@@ -45,48 +45,41 @@ class Network:
 
         self.bottleneck_size = bottleneck_placeholder.shape[-1]
 
-        self.encoder = self.get_encoder(l2_on_last_layer=True)
+        self.encoder = self.get_encoder()
         self.decoder = self.get_decoder(self.bottleneck_placeholder)
 
-    def get_encoder(self, l2_on_last_layer: bool = True):
+    def get_encoder(self):
         with tf.variable_scope("encoder"):
-            x = tf.layers.conv2d(self.image_pc, 64, (3, 3), strides=2, activation=tf.nn.relu,
+            x = tf.layers.conv2d(self.image_pc, 128, (3, 3), strides=2, activation=tf.nn.relu,
                                  kernel_regularizer=tf.keras.regularizers.l2(5e-4))
-            x = tf.layers.conv2d(x, 128, (3, 3), strides=1, activation=tf.nn.relu,
-                                 kernel_regularizer=tf.keras.regularizers.l2(5e-4))
-            x = tf.layers.conv2d(x, 256, (3, 3), strides=2, activation=tf.nn.relu,
-                                 kernel_regularizer=tf.keras.regularizers.l2(5e-4))
-            x = tf.layers.max_pooling2d(x, (3, 3), strides=2)
+            x = tf.layers.batch_normalization(x, momentum=0.8)
             x = tf.layers.conv2d(x, 256, (3, 3), strides=1, activation=tf.nn.relu,
                                  kernel_regularizer=tf.keras.regularizers.l2(5e-4))
-
-            x = tf.layers.average_pooling2d(x, (1, 1), strides=1)
-            x = tf.layers.flatten(x)
-
-            if l2_on_last_layer:
-                x = tf.layers.dense(x, 128, activation=tf.nn.tanh, kernel_regularizer=tf.keras.regularizers.l2(5e-4))
-            else:
-                x = tf.layers.dense(x, 128, activation=tf.nn.tanh)
-
+            x = tf.layers.conv2d(x, 512, (3, 3), strides=2, activation=tf.nn.relu,
+                                 kernel_regularizer=tf.keras.regularizers.l2(5e-4))
+            x = tf.layers.max_pooling2d(x, (3, 3), strides=2)
+            x = tf.layers.batch_normalization(x, momentum=0.8)
+            x = tf.layers.conv2d(x, 1024, (3, 3), strides=1, activation=tf.nn.relu,
+                                 kernel_regularizer=tf.keras.regularizers.l2(5e-4))
             return x
 
     def get_decoder(self, bl_pc):
         with tf.variable_scope("decoder"):
-            x = tf.layers.dense(bl_pc, 144, activation=tf.nn.relu, kernel_regularizer=tf.keras.regularizers.l2(5e-4))
-            x = tf.layers.dense(x, 169, activation=tf.nn.relu, kernel_regularizer=tf.keras.regularizers.l2(5e-4))
-            x = tf.reshape(x, (-1, 13, 13, 1))
-
-            x = tf.layers.conv2d_transpose(x, 64, (3, 3), strides=1, activation=tf.nn.relu, padding="SAME",
+            x = tf.layers.conv2d_transpose(bl_pc, 1024, (3, 3), strides=2, activation=tf.nn.relu, padding="SAME",
                                            kernel_regularizer=tf.keras.regularizers.l2(5e-4))
             x = tf.layers.conv2d(x, 64, (2, 2), strides=1, activation=tf.nn.relu)
             x = tf.layers.batch_normalization(x, momentum=0.8)
-            x = tf.layers.conv2d_transpose(x, 128, (3, 3), strides=1, activation=tf.nn.relu, padding="SAME",
-                                           kernel_regularizer=tf.keras.regularizers.l2(5e-4))
-            x = tf.layers.conv2d_transpose(x, 128, (3, 3), strides=2, activation=tf.nn.relu, padding="SAME",
+            x = tf.layers.conv2d_transpose(x, 512, (3, 3), strides=2, activation=tf.nn.relu, padding="SAME",
                                            kernel_regularizer=tf.keras.regularizers.l2(5e-4))
             x = tf.layers.conv2d_transpose(x, 256, (3, 3), strides=2, activation=tf.nn.relu, padding="SAME",
                                            kernel_regularizer=tf.keras.regularizers.l2(5e-4))
-            x = tf.layers.conv2d_transpose(x, self.channels, (3, 3), strides=1, activation=None, padding="SAME")
+            x = tf.layers.batch_normalization(x, momentum=0.8)
+            x = tf.layers.conv2d_transpose(x, 128, (3, 3), strides=2, activation=tf.nn.relu, padding="SAME",
+                                           kernel_regularizer=tf.keras.regularizers.l2(5e-4))
+            x = tf.layers.batch_normalization(x, momentum=0.8)
+            x = tf.layers.conv2d_transpose(x, 64, (3, 3), strides=1, activation=tf.nn.relu, padding="SAME",
+                                           kernel_regularizer=tf.keras.regularizers.l2(5e-4))
+            x = tf.layers.conv2d_transpose(x, self.channels, (3, 3), strides=2, activation=None, padding="SAME")
 
         return x
 
@@ -109,7 +102,7 @@ class TrainAutoEncoderModel:
         os.makedirs(os.path.dirname(self.dir2save), exist_ok=True)
 
         self.image_pc = tf.placeholder(tf.float32, [None, self.xs, self.ys, self.channels], name="image_pc")
-        self.bottleneck_pc = tf.placeholder(tf.float32, [None, 128], name="bottleneck_pc")
+        self.bottleneck_pc = tf.placeholder(tf.float32, [None, 2, 2, 1024], name="bottleneck_pc")
         self.global_step = tf.Variable(0., name="global_step")
         tf.logging.info(" Placeholders created!")
 
@@ -269,5 +262,7 @@ if __name__ == '__main__':
     dl = DataLoader("dataset", (48, 48, 3))
     X_data = dl.load_images()
 
-    trainer = TrainAutoEncoderModel(X_data, (48, 48, 3), decay_steps=200, lr=0.0008, model_dir="autoencoder_model/")
+    trainer = TrainAutoEncoderModel(X_data, (48, 48, 3), decay_steps=200, lr=0.001, model_dir="autoencoder_model/",
+                                    epochs=50, batch_size=128, dir2save="predicted_images/")
+    trainer.train_model()
     trainer.give_examples()
